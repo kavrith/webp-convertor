@@ -1,0 +1,713 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>webp squeeze — 이미지 일괄 WebP 변환</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<style>
+  :root {
+    --bg: #eef1f4;
+    --surface: #ffffff;
+    --ink: #16191f;
+    --muted: #667085;
+    --faint: #98a2b3;
+    --line: #dce1e7;
+    --accent: #0e8c7f;
+    --accent-dark: #0b6e64;
+    --accent-tint: #e4f3f1;
+    --open: #5147d6;
+    --open-dark: #403aad;
+    --warn: #b26a00;
+    --warn-tint: #fbf1e0;
+    --danger: #c0392b;
+    --danger-tint: #f6e7e5;
+    --mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "Apple SD Gothic Neo",
+            "Malgun Gothic", Roboto, sans-serif;
+    --radius: 12px;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font-family: var(--sans); line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 880px; margin: 0 auto; padding: 32px 20px 80px; }
+
+  header {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 16px; flex-wrap: wrap; margin-bottom: 28px;
+  }
+  .wordmark { display: flex; align-items: baseline; gap: 10px; }
+  .wordmark .mark {
+    font-family: var(--mono); font-weight: 700; font-size: 22px;
+    letter-spacing: -0.03em; color: var(--ink);
+  }
+  .wordmark .mark b { color: var(--accent); }
+  .wordmark .sub { font-size: 13px; color: var(--muted); }
+  .badge {
+    display: inline-flex; align-items: center; gap: 7px; font-size: 12.5px;
+    padding: 6px 12px; border-radius: 999px; border: 1px solid var(--line);
+    background: var(--surface); color: var(--muted);
+  }
+  .badge .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); flex: none; }
+  .badge.warn .dot { background: var(--warn); }
+
+  .drop {
+    background: var(--surface); border: 1.5px dashed var(--line);
+    border-radius: var(--radius); padding: 40px 24px; text-align: center;
+    transition: border-color .15s, background .15s;
+  }
+  .drop.over { border-color: var(--accent); background: var(--accent-tint); }
+  .drop h2 { margin: 0 0 6px; font-size: 18px; font-weight: 600; }
+  .drop p { margin: 0 0 20px; color: var(--muted); font-size: 14px; }
+  .drop-actions { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
+
+  .drop-reading { display: none; }
+  .drop.reading .drop-body { display: none; }
+  .drop.reading .drop-reading { display: flex; flex-direction: column; align-items: center; gap: 16px; }
+  .spinner {
+    width: 26px; height: 26px; border: 3px solid var(--line);
+    border-top-color: var(--accent); border-radius: 50%; animation: spin .8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .reading-text { font-family: var(--mono); font-size: 14px; color: var(--muted); }
+
+  button { font-family: var(--sans); font-size: 14px; cursor: pointer; }
+  .btn {
+    border: 1px solid var(--line); background: var(--surface); color: var(--ink);
+    padding: 10px 16px; border-radius: 9px; transition: border-color .12s, background .12s;
+  }
+  .btn:hover { border-color: var(--faint); }
+  .btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+  .btn.primary:hover { background: var(--accent-dark); border-color: var(--accent-dark); }
+  .btn.primary:disabled { background: var(--line); border-color: var(--line); color: var(--faint); cursor: not-allowed; }
+  .btn.open { background: var(--open); border-color: var(--open); color: #fff; font-weight: 600; }
+  .btn.open:hover { background: var(--open-dark); border-color: var(--open-dark); }
+
+  .manifest {
+    margin-top: 18px; background: var(--surface); border: 1px solid var(--line);
+    border-radius: var(--radius); overflow: hidden; display: none;
+  }
+  .manifest.show { display: block; }
+  .manifest .head {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 12px 16px; border-bottom: 1px solid var(--line); font-size: 13px; color: var(--muted);
+  }
+  .manifest .head .total { font-family: var(--mono); color: var(--ink); font-weight: 500; }
+  .mrows { max-height: 260px; overflow-y: auto; }
+  .mrow {
+    display: flex; align-items: center; gap: 12px; padding: 8px 12px 8px 16px;
+    border-bottom: 1px solid #f0f2f5; font-size: 13px;
+  }
+  .mrow:last-child { border-bottom: none; }
+  .chip {
+    font-family: var(--mono); font-size: 11px; font-weight: 500;
+    padding: 2px 8px; border-radius: 6px; flex: none; min-width: 46px; text-align: center;
+  }
+  .chip.folder { background: var(--accent-tint); color: var(--accent-dark); }
+  .chip.image { background: #eef1f4; color: var(--muted); }
+  .mname {
+    font-family: var(--mono); flex: 1; white-space: nowrap;
+    overflow: hidden; text-overflow: ellipsis;
+  }
+  .mcount { font-family: var(--mono); color: var(--muted); flex: none; }
+  .mremove {
+    flex: none; width: 24px; height: 24px; border-radius: 6px;
+    border: 1px solid transparent; background: transparent; color: var(--faint);
+    font-size: 17px; line-height: 1; padding: 0;
+    display: flex; align-items: center; justify-content: center;
+    transition: background .12s, color .12s, border-color .12s;
+  }
+  .mremove:hover { background: var(--danger-tint); color: var(--danger); border-color: #f0d3ce; }
+  .mremove:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+  .controls {
+    background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius);
+    padding: 20px 22px; margin-top: 18px;
+    display: grid; grid-template-columns: 1fr 1fr; gap: 18px 28px; align-items: start;
+  }
+  .ctl { display: flex; flex-direction: column; gap: 8px; }
+  .ctl label {
+    font-size: 13px; color: var(--muted);
+    display: flex; justify-content: space-between; align-items: baseline;
+  }
+  .ctl label .val { font-family: var(--mono); font-size: 13px; color: var(--accent); font-weight: 500; }
+  input[type="range"] { width: 100%; accent-color: var(--accent); }
+  input[type="text"] {
+    font-family: var(--mono); font-size: 14px; padding: 9px 11px;
+    border: 1px solid var(--line); border-radius: 8px; background: var(--surface);
+    color: var(--ink); width: 100%;
+  }
+  input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; border-color: var(--accent); }
+  .hint { font-size: 12px; color: var(--faint); }
+
+  .runbar { display: flex; align-items: center; gap: 14px; margin-top: 18px; }
+  .progress { flex: 1; height: 8px; background: var(--line); border-radius: 999px; overflow: hidden; }
+  .progress > span { display: block; height: 100%; width: 0; background: var(--accent); transition: width .2s; }
+  .runbar .count { font-family: var(--mono); font-size: 13px; color: var(--muted); white-space: nowrap; }
+
+  .result {
+    margin-top: 26px; background: var(--surface); border: 1px solid var(--line);
+    border-radius: var(--radius); padding: 26px 24px; display: none;
+  }
+  .result.show { display: block; }
+  .saved-line { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+  .saved-num {
+    font-family: var(--mono); font-weight: 700; font-size: 46px; line-height: 1;
+    letter-spacing: -0.03em; color: var(--accent);
+  }
+  .saved-label { font-size: 15px; color: var(--muted); }
+  .saved-bar { margin-top: 18px; height: 10px; background: var(--line); border-radius: 999px; overflow: hidden; }
+  .saved-bar > span { display: block; height: 100%; background: var(--accent); width: 0; transition: width .6s ease-out; }
+  .saved-meta { margin-top: 12px; font-family: var(--mono); font-size: 13px; color: var(--muted); }
+  .saved-meta b { color: var(--ink); font-weight: 500; }
+  .result-actions { margin-top: 22px; display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }
+  .savenote { font-size: 13px; color: var(--muted); }
+  .savenote code { font-family: var(--mono); color: var(--accent); background: var(--accent-tint); padding: 1px 6px; border-radius: 5px; }
+
+  .filelist {
+    margin-top: 20px; border: 1px solid var(--line); border-radius: var(--radius);
+    background: var(--surface); overflow: hidden; display: none;
+  }
+  .filelist.show { display: block; }
+  .filelist .head {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 12px 16px; border-bottom: 1px solid var(--line); font-size: 13px; color: var(--muted);
+  }
+  .rows { max-height: 340px; overflow-y: auto; }
+  .row {
+    display: grid; grid-template-columns: 1fr auto auto; gap: 14px; align-items: center;
+    padding: 9px 16px; border-bottom: 1px solid #f0f2f5; font-size: 13px;
+  }
+  .row:last-child { border-bottom: none; }
+  .row .name {
+    font-family: var(--mono); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .row .sizes { font-family: var(--mono); color: var(--muted); white-space: nowrap; }
+  .row .delta { font-family: var(--mono); font-weight: 500; min-width: 52px; text-align: right; color: var(--accent); }
+  .row .delta.up { color: var(--warn); }
+  .row .delta.fail { color: var(--danger); }
+
+  footer { margin-top: 40px; text-align: center; font-size: 12px; color: var(--faint); }
+  footer code { font-family: var(--mono); }
+
+  .note {
+    margin-top: 14px; font-size: 12.5px; color: var(--muted);
+    background: var(--warn-tint); border: 1px solid #f0dfc0;
+    padding: 10px 14px; border-radius: 9px; display: none;
+  }
+  .note.show { display: block; }
+
+  @media (max-width: 560px) {
+    .controls { grid-template-columns: 1fr; }
+    .saved-num { font-size: 38px; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    * { transition: none !important; }
+    .spinner { animation: none; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <div class="wordmark">
+      <span class="mark">webp&thinsp;<b>squeeze</b></span>
+      <span class="sub">이미지를 한 번에 WebP로 압축</span>
+    </div>
+    <span class="badge" id="capBadge"><span class="dot"></span><span id="capText">확인 중…</span></span>
+  </header>
+
+  <div class="drop" id="drop">
+    <div class="drop-body" id="dropBody">
+      <h2>폴더 · 이미지 를 여기에 놓으세요</h2>
+      <p>드래그해서 놓거나 아래에서 선택하세요. 계속 놓으면 목록에 추가됩니다.</p>
+      <div class="drop-actions">
+        <button class="btn" id="pickFolder">폴더 선택</button>
+        <button class="btn" id="pickFiles">이미지 선택</button>
+      </div>
+    </div>
+    <div class="drop-reading" id="dropReading">
+      <div class="spinner"></div>
+      <div class="reading-text" id="readingText">읽는 중…</div>
+    </div>
+  </div>
+
+  <div class="manifest" id="manifest">
+    <div class="head"><span id="manifestTitle">불러온 항목</span><span class="total" id="manifestTotal"></span></div>
+    <div class="mrows" id="mrows"></div>
+  </div>
+
+  <div class="note" id="warnNote"></div>
+
+  <div class="controls">
+    <div class="ctl">
+      <label for="q">품질 <span class="val" id="qVal">80</span></label>
+      <input type="range" id="q" min="10" max="100" value="80" step="1">
+      <span class="hint">낮출수록 용량이 줄고 화질이 떨어집니다.</span>
+    </div>
+    <div class="ctl">
+      <label for="outName">출력 폴더 이름</label>
+      <input type="text" id="outName" value="_WEBP_OUT">
+      <span class="hint">변환 결과가 다운로드 폴더에 <b>이 이름.zip</b>으로 저장됩니다. 풀면 이 이름의 폴더가 됩니다.</span>
+    </div>
+  </div>
+
+  <div class="runbar">
+    <button class="btn primary" id="run" disabled>변환 시작</button>
+    <div class="progress"><span id="progFill"></span></div>
+    <div class="count" id="progText">대기 중</div>
+  </div>
+
+  <div class="result" id="result">
+    <div class="saved-line">
+      <span class="saved-num" id="savedNum">0</span>
+      <span class="saved-label" id="savedLabel">절약</span>
+    </div>
+    <div class="saved-bar"><span id="savedBar"></span></div>
+    <div class="saved-meta" id="savedMeta"></div>
+    <div class="result-actions" id="resultActions"></div>
+  </div>
+
+  <div class="filelist" id="filelist">
+    <div class="head"><span id="listCount">0개 파일</span><span>원본 → WebP</span></div>
+    <div class="rows" id="rows"></div>
+  </div>
+
+  <footer>
+    100% 브라우저에서 처리 — 파일이 서버로 전송되지 않습니다. WebP 인코딩은 <code>canvas</code>로 처리됩니다.
+  </footer>
+
+</div>
+
+<input type="file" id="inFolder" webkitdirectory directory multiple hidden>
+<input type="file" id="inFiles" accept="image/*" multiple hidden>
+
+<script>
+(function () {
+  "use strict";
+
+  var IMG_EXT = ["png","jpg","jpeg","gif","bmp","webp","avif","tif","tiff"];
+  var hasFSA = typeof window.showDirectoryPicker === "function";
+
+  var canvas = document.createElement("canvas");
+  var ctx = canvas.getContext("2d");
+
+  var groups = [];                    // [{ id, name, kind, tasks:[{path,getFile}] }]
+  var pathSet = Object.create(null);  // dedupe by task path
+  var gid = 0;
+  var tasks = [];                     // derived flat list
+  var webpOk = true;
+
+  var $ = function (id) { return document.getElementById(id); };
+  var drop = $("drop");
+  var runBtn = $("run");
+  var progFill = $("progFill");
+  var progText = $("progText");
+  var capBadge = $("capBadge"), capText = $("capText");
+  var warnNote = $("warnNote");
+
+  function mkGet(f) { return function () { return Promise.resolve(f); }; }
+  function mkGetHandle(h) { return function () { return h.getFile(); }; }
+  function tick() { return new Promise(function (r) { setTimeout(r, 0); }); }
+
+  function checkWebP() {
+    try {
+      var c = document.createElement("canvas"); c.width = c.height = 1;
+      return c.toDataURL("image/webp").indexOf("data:image/webp") === 0;
+    } catch (e) { return false; }
+  }
+  webpOk = checkWebP();
+
+  if (!webpOk) {
+    capText.textContent = "이 브라우저는 WebP 인코딩 미지원";
+    capBadge.classList.add("warn");
+    showWarn("이 브라우저는 WebP 인코딩을 지원하지 않습니다. 최신 Chrome, Edge, Firefox, 또는 Safari 16 이상을 사용하세요.");
+    runBtn.disabled = true;
+  } else {
+    capText.textContent = "결과는 다운로드 폴더에 저장";
+  }
+
+  function showWarn(msg) { warnNote.textContent = msg; warnNote.classList.add("show"); }
+  function clearWarn() { warnNote.classList.remove("show"); }
+
+  function isImage(name) {
+    var ext = name.split(".").pop().toLowerCase();
+    return IMG_EXT.indexOf(ext) !== -1;
+  }
+  function swapExt(path) { return path.replace(/\.[^\/.]+$/, "") + ".webp"; }
+  function sanitizeName(v) {
+    var s = (v || "").trim().replace(/[\\/]/g, "_");
+    return s || "_WEBP_OUT";
+  }
+  function fmtBytes(n) {
+    if (n < 1024) return n + " B";
+    if (n < 1024 * 1024) return (n / 1024).toFixed(1) + " KB";
+    return (n / (1024 * 1024)).toFixed(2) + " MB";
+  }
+
+  // ---- reading indicator ----
+  var _lastRead = 0, _found = 0;
+  function startReading() { drop.classList.add("reading"); _found = 0; _lastRead = 0; $("readingText").textContent = "읽는 중…"; }
+  function reportFound() {
+    _found++;
+    var now = performance.now();
+    if (now - _lastRead > 80) { _lastRead = now; $("readingText").textContent = "읽는 중… " + _found.toLocaleString() + "개 이미지 찾음"; }
+  }
+  function endReading() { drop.classList.remove("reading"); }
+
+  // ---- manifest ----
+  function renderManifest() {
+    var m = $("manifest"), mrows = $("mrows");
+    if (!groups.length) { m.classList.remove("show"); mrows.innerHTML = ""; return; }
+    $("manifestTitle").textContent = "불러온 항목 (" + groups.length + ")";
+    $("manifestTotal").textContent = "총 " + tasks.length.toLocaleString() + "개 이미지";
+    mrows.innerHTML = "";
+    var labels = { folder: "폴더", image: "이미지" };
+    for (var i = 0; i < groups.length; i++) {
+      var g = groups[i];
+      var row = document.createElement("div"); row.className = "mrow";
+      var chip = document.createElement("span"); chip.className = "chip " + g.kind; chip.textContent = labels[g.kind] || g.kind;
+      var nm = document.createElement("span"); nm.className = "mname"; nm.title = g.name; nm.textContent = "\u200e" + g.name;
+      var ct = document.createElement("span"); ct.className = "mcount";
+      ct.textContent = g.kind === "folder" ? g.tasks.length.toLocaleString() + "개" : "";
+      var rm = document.createElement("button"); rm.className = "mremove"; rm.type = "button";
+      rm.setAttribute("aria-label", "목록에서 제거"); rm.title = "제거"; rm.textContent = "\u00d7";
+      (function (id) { rm.addEventListener("click", function () { removeGroup(id); }); })(g.id);
+      row.appendChild(chip); row.appendChild(nm); row.appendChild(ct); row.appendChild(rm);
+      mrows.appendChild(row);
+    }
+    m.classList.add("show");
+  }
+
+  function refreshFromGroups() {
+    tasks = [];
+    for (var i = 0; i < groups.length; i++)
+      for (var j = 0; j < groups[i].tasks.length; j++) tasks.push(groups[i].tasks[j]);
+    renderManifest();
+    runBtn.disabled = tasks.length === 0 || !webpOk;
+    progText.textContent = tasks.length ? tasks.length.toLocaleString() + "개 이미지 준비됨" : "대기 중";
+    $("result").classList.remove("show");
+    $("filelist").classList.remove("show");
+  }
+
+  function addGroups(newGroups) {
+    var added = 0, dup = 0;
+    for (var i = 0; i < newGroups.length; i++) {
+      var g = newGroups[i];
+      var kept = [];
+      for (var j = 0; j < g.tasks.length; j++) {
+        var p = g.tasks[j].path;
+        if (pathSet[p]) { dup++; continue; }
+        pathSet[p] = true;
+        kept.push(g.tasks[j]);
+      }
+      if (!kept.length) continue;
+      g.tasks = kept;
+      g.id = ++gid;
+      groups.push(g);
+      added += kept.length;
+    }
+    refreshFromGroups();
+    if (added === 0 && dup > 0) showWarn("이미 추가된 이미지입니다.");
+    else if (added === 0) showWarn("추가할 이미지를 찾지 못했습니다.");
+    else clearWarn();
+  }
+
+  function removeGroup(id) {
+    for (var i = 0; i < groups.length; i++) {
+      if (groups[i].id === id) {
+        for (var j = 0; j < groups[i].tasks.length; j++) delete pathSet[groups[i].tasks[j].path];
+        groups.splice(i, 1);
+        break;
+      }
+    }
+    clearWarn();
+    refreshFromGroups();
+  }
+
+  // ---- walkers ----
+  async function walkDir(dirHandle, prefix, out) {
+    for await (var entry of dirHandle.values()) {
+      var p = prefix + entry.name;
+      if (entry.kind === "file") {
+        if (isImage(entry.name)) { out.push({ path: p, getFile: mkGetHandle(entry) }); reportFound(); }
+      } else if (entry.kind === "directory") {
+        await walkDir(entry, p + "/", out);
+      }
+    }
+  }
+  function readEntries(reader) { return new Promise(function (res, rej) { reader.readEntries(res, rej); }); }
+  async function walkEntry(entry, prefix, out) {
+    if (entry.isFile) {
+      if (isImage(entry.name)) {
+        var file = null;
+        try { file = await new Promise(function (res, rej) { entry.file(res, rej); }); } catch (e) { file = null; }
+        if (file) { out.push({ path: prefix + entry.name, getFile: mkGet(file) }); reportFound(); }
+      }
+    } else if (entry.isDirectory) {
+      var reader = entry.createReader(), batch;
+      do {
+        batch = await readEntries(reader);
+        for (var i = 0; i < batch.length; i++) await walkEntry(batch[i], prefix + entry.name + "/", out);
+      } while (batch.length > 0);
+    }
+  }
+
+  // ---- conversion ----
+  async function decode(fileOrBlob) {
+    if (typeof createImageBitmap === "function") {
+      try { return await createImageBitmap(fileOrBlob, { imageOrientation: "from-image" }); }
+      catch (e) { /* fall through */ }
+    }
+    var url = URL.createObjectURL(fileOrBlob);
+    try {
+      return await new Promise(function (res, rej) {
+        var im = new Image();
+        im.onload = function () { res(im); };
+        im.onerror = function () { rej(new Error("decode failed")); };
+        im.src = url;
+      });
+    } finally { setTimeout(function () { URL.revokeObjectURL(url); }, 0); }
+  }
+  async function toWebP(fileOrBlob, quality) {
+    var src = await decode(fileOrBlob);
+    var w = src.width, h = src.height;
+    canvas.width = w; canvas.height = h;
+    ctx.clearRect(0, 0, w, h);
+    ctx.drawImage(src, 0, 0, w, h);
+    if (src.close) src.close();
+    var blob = await new Promise(function (res) { canvas.toBlob(res, "image/webp", quality); });
+    if (!blob) throw new Error("encode failed");
+    return blob;
+  }
+
+  // ---- output: always a zip into the Downloads folder ----
+  async function makeZipBlob(results, outName) {
+    var zip = new JSZip();
+    for (var i = 0; i < results.length; i++) zip.file(outName + "/" + results[i].outPath, results[i].blob);
+    return await zip.generateAsync({ type: "blob", compression: "STORE" });
+  }
+  function triggerDownload(blob, filename) {
+    var a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(function () { URL.revokeObjectURL(a.href); }, 6000);
+  }
+
+  // ---- run ----
+  runBtn.addEventListener("click", async function () {
+    if (!tasks.length) return;
+    var quality = parseInt($("q").value, 10) / 100;
+    var outName = sanitizeName($("outName").value);
+
+    runBtn.disabled = true;
+    var rows = $("rows"); rows.innerHTML = "";
+    $("filelist").classList.add("show");
+    $("listCount").textContent = tasks.length.toLocaleString() + "개 파일";
+    $("result").classList.remove("show");
+
+    var totalOrig = 0, totalOut = 0, done = 0, failed = 0;
+    var results = [];
+
+    for (var i = 0; i < tasks.length; i++) {
+      var t = tasks[i];
+      var cls = "delta", txt = "", origSize = 0, outSize = 0;
+      try {
+        var file = await t.getFile();
+        origSize = file.size;
+        var webp = await toWebP(file, quality);
+        results.push({ outPath: swapExt(t.path), blob: webp });
+        outSize = webp.size;
+        var pct = origSize ? Math.round((1 - outSize / origSize) * 100) : 0;
+        if (pct >= 0) { cls = "delta"; txt = "-" + pct + "%"; }
+        else { cls = "delta up"; txt = "+" + Math.abs(pct) + "%"; }
+        totalOrig += origSize; totalOut += outSize;
+      } catch (e) { failed++; cls = "delta fail"; txt = "실패"; }
+      done++;
+
+      var row = document.createElement("div"); row.className = "row";
+      var nm = document.createElement("div"); nm.className = "name"; nm.title = t.path;
+      nm.textContent = "\u200e" + t.path;
+      var sz = document.createElement("div"); sz.className = "sizes";
+      sz.textContent = origSize ? fmtBytes(origSize) + " → " + fmtBytes(outSize) : "—";
+      var dl = document.createElement("div"); dl.className = cls; dl.textContent = txt;
+      row.appendChild(nm); row.appendChild(sz); row.appendChild(dl);
+      rows.appendChild(row);
+
+      progFill.style.width = (done / tasks.length * 100) + "%";
+      progText.textContent = done.toLocaleString() + " / " + tasks.length.toLocaleString();
+      if (done % 3 === 0) await tick();
+    }
+
+    // ---- save: zip -> Downloads ----
+    var actions = $("resultActions"); actions.innerHTML = "";
+    if (results.length) {
+      var zipName = outName + ".zip";
+      try {
+        var blob = await makeZipBlob(results, outName);
+        triggerDownload(blob, zipName);
+
+        var openBtn = document.createElement("button");
+        openBtn.className = "btn open";
+        openBtn.textContent = "ZIP 다시 받기";
+        openBtn.addEventListener("click", function () { triggerDownload(blob, zipName); });
+        actions.appendChild(openBtn);
+
+        var note = document.createElement("span"); note.className = "savenote";
+        note.innerHTML = "다운로드 폴더에 <code>" + zipName + "</code> 저장됨 · 더블클릭하면 <code>" + outName + "/</code> 폴더로 풀립니다";
+        actions.appendChild(note);
+      } catch (e) {
+        showWarn("ZIP 생성 중 오류: " + (e.message || e));
+      }
+    }
+
+    var saved = Math.max(0, totalOrig - totalOut);
+    var savedPct = totalOrig ? Math.round((saved / totalOrig) * 100) : 0;
+    $("savedLabel").textContent = savedPct + "% 작아짐";
+    $("savedBar").style.width = savedPct + "%";
+    $("savedMeta").innerHTML =
+      "<b>" + (tasks.length - failed).toLocaleString() + "</b>개 변환" +
+      (failed ? " · <b>" + failed + "</b>개 실패" : "") +
+      " · " + fmtBytes(totalOrig) + " → <b>" + fmtBytes(totalOut) + "</b>";
+    $("result").classList.add("show");
+    animateSaved(saved);
+
+    progText.textContent = "완료";
+    runBtn.disabled = false;
+  });
+
+  function animateSaved(bytes) {
+    var el = $("savedNum");
+    var reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    if (reduce || bytes === 0) { el.textContent = fmtBytes(bytes); return; }
+    var dur = 700, t0 = performance.now();
+    function step(now) {
+      var p = Math.min(1, (now - t0) / dur);
+      var eased = 1 - Math.pow(1 - p, 3);
+      el.textContent = fmtBytes(Math.round(bytes * eased));
+      if (p < 1) requestAnimationFrame(step); else el.textContent = fmtBytes(bytes);
+    }
+    requestAnimationFrame(step);
+  }
+
+  // ---- pickers (append) ----
+  $("pickFolder").addEventListener("click", async function () {
+    if (hasFSA) {
+      var dh;
+      try { dh = await window.showDirectoryPicker(); }
+      catch (e) { if (e && e.name !== "AbortError") showWarn("폴더를 열 수 없습니다: " + e.message); return; }
+      startReading();
+      var g = { name: dh.name + "/", kind: "folder", tasks: [] };
+      try { await walkDir(dh, dh.name + "/", g.tasks); } finally { endReading(); }
+      addGroups([g]);
+    } else { $("inFolder").click(); }
+  });
+  $("pickFiles").addEventListener("click", function () { $("inFiles").click(); });
+
+  $("inFolder").addEventListener("change", async function (e) {
+    var all = Array.prototype.slice.call(e.target.files);
+    startReading();
+    var rootName = all.length ? (all[0].webkitRelativePath || all[0].name).split("/")[0] : "폴더";
+    var g = { name: rootName + "/", kind: "folder", tasks: [] };
+    try {
+      for (var i = 0; i < all.length; i++) {
+        if (isImage(all[i].name)) { g.tasks.push({ path: all[i].webkitRelativePath || all[i].name, getFile: mkGet(all[i]) }); reportFound(); }
+        if (i % 200 === 0) await tick();
+      }
+    } finally { endReading(); }
+    addGroups([g]);
+    e.target.value = "";
+  });
+  $("inFiles").addEventListener("change", function (e) {
+    var files = Array.prototype.slice.call(e.target.files).filter(function (f) { return isImage(f.name); });
+    var newGroups = files.map(function (f) { return { name: f.name, kind: "image", tasks: [{ path: f.name, getFile: mkGet(f) }] }; });
+    addGroups(newGroups);
+    e.target.value = "";
+  });
+
+  // ---- drag & drop (append) ----
+  ["dragenter", "dragover"].forEach(function (ev) {
+    drop.addEventListener(ev, function (e) { e.preventDefault(); drop.classList.add("over"); });
+  });
+  ["dragleave", "drop"].forEach(function (ev) {
+    drop.addEventListener(ev, function (e) { e.preventDefault(); if (ev !== "dragover") drop.classList.remove("over"); });
+  });
+  window.addEventListener("dragover", function (e) { e.preventDefault(); });
+  window.addEventListener("drop", function (e) { e.preventDefault(); });
+
+  drop.addEventListener("drop", async function (e) {
+    var dt = e.dataTransfer; if (!dt) return;
+    var items = dt.items ? Array.prototype.slice.call(dt.items) : [];
+
+    var handlePromises = null, fb = null, looseFiles = null;
+    if (items.length && typeof items[0].getAsFileSystemHandle === "function") {
+      handlePromises = [];
+      for (var a = 0; a < items.length; a++) handlePromises.push(items[a].kind === "file" ? items[a].getAsFileSystemHandle() : null);
+    } else if (items.length && items[0].webkitGetAsEntry) {
+      fb = [];
+      for (var b = 0; b < items.length; b++) {
+        if (items[b].kind !== "file") continue;
+        fb.push({ entry: items[b].webkitGetAsEntry(), file: items[b].getAsFile ? items[b].getAsFile() : null });
+      }
+    } else {
+      looseFiles = Array.prototype.slice.call(dt.files || []);
+    }
+
+    startReading();
+    var newGroups = [];
+    try {
+      if (handlePromises) {
+        for (var i = 0; i < handlePromises.length; i++) {
+          if (!handlePromises[i]) continue;
+          var h = null;
+          try { h = await handlePromises[i]; } catch (err) { h = null; }
+          if (!h) continue;
+          if (h.kind === "directory") {
+            var g = { name: h.name + "/", kind: "folder", tasks: [] };
+            await walkDir(h, h.name + "/", g.tasks);
+            if (g.tasks.length) newGroups.push(g);
+          } else if (isImage(h.name)) {
+            newGroups.push({ name: h.name, kind: "image", tasks: [{ path: h.name, getFile: mkGetHandle(h) }] });
+          }
+        }
+      } else if (fb) {
+        for (var k = 0; k < fb.length; k++) {
+          var ent = fb[k].entry;
+          if (ent && ent.isDirectory) {
+            var g2 = { name: ent.name + "/", kind: "folder", tasks: [] };
+            await walkEntry(ent, "", g2.tasks);
+            if (g2.tasks.length) newGroups.push(g2);
+          } else if (fb[k].file && isImage(fb[k].file.name)) {
+            var f2 = fb[k].file;
+            newGroups.push({ name: f2.name, kind: "image", tasks: [{ path: f2.name, getFile: mkGet(f2) }] });
+          }
+        }
+      } else if (looseFiles) {
+        for (var fi = 0; fi < looseFiles.length; fi++) {
+          var ff = looseFiles[fi];
+          if (isImage(ff.name)) newGroups.push({ name: ff.name, kind: "image", tasks: [{ path: ff.name, getFile: mkGet(ff) }] });
+        }
+      }
+    } catch (err) {
+      showWarn("드롭한 항목을 읽는 중 오류가 발생했습니다: " + (err && err.message ? err.message : err));
+    } finally { endReading(); }
+
+    addGroups(newGroups);
+  });
+
+  $("q").addEventListener("input", function (e) { $("qVal").textContent = e.target.value; });
+})();
+</script>
+</body>
+</html>
